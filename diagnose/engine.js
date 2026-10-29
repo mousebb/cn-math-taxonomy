@@ -8,6 +8,8 @@
  *         summarize(graph, session) -> 结果（根因、学习路径、掌握/不稳/薄弱/未测）
  *         gradeTargets(graph, '一年级'|'七上'|'高一'|'选必二', subject?) -> {ids, volumes, label} | null
  *           默认 subject 为 math，不把英语卷进数学的整册；'english' 只取英语（含九全），'physics' 只取物理（八上、八下、九全），'all' 不限学科
+ *         profileScopes('高一', subject?) -> {scopes, stage, pick, note} | null
+ *           孩子档案里的年级 → 诊断默认范围。年级和「册」不是一一对应，映射规则集中在这里，见函数注释。
  *         createSession(graph, ids, {mode:'screen', confirm}) -> 筛查会话：范围 = 目标本身，回溯不出范围，默认题量上限 SCREEN_LIMIT
  *         chapterSummary(graph, session) -> 按章汇总（薄弱章节在前）
  *         layout(graph, session, summary) -> 路径图的分层布局
@@ -607,6 +609,64 @@
     return ids.length ? { ids: ids, volumes: volumes, label: label } : null;
   }
 
+  const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+  /**
+   * 档案年级 → 诊断默认范围。题库里的「年级」和「册」不是一一对应，差异全部在这里吃掉：
+   *   数学  一年级~九年级 = 对应年级；高一 = 必修一；高二 = 必修二；高三 = 选必各册（要选）
+   *   物理  八、九年级 = 对应年级；高一 = 必修一/必修二；高二 = 必修二/必修三；高三 = 选必各册
+   *   英语  三~九年级 = 对应年级；高一 = 必修一/必修二；高二 = 必修二~选必一；高三 = 选必各册
+   *   语文  只有小学一~六年级，超出覆盖时落到六年级并提示
+   * 一个年级对应多册时，第一册是默认值（scopes[0]），其余给一键切换；
+   * 高三没有「整册」，pick=true 表示不替用户猜，让他在 scopes 里点一册。
+   * 返回 { scopes: string[], stage: 'p'|'j'|'h', pick: boolean, note: string }；没有档案年级返回 null。
+   */
+  function profileScopes(grade, subject) {
+    const g = String(grade == null ? '' : grade).trim();
+    if (!g) return null;
+    const subj = subject == null || subject === '' ? 'math' : subject;
+    const BOOKS = function (list, note, pick) { return { scopes: list, stage: 'h', pick: !!pick, note: note || '' }; };
+
+    const m = /^([一二三四五六七八九])年级$/.exec(g);
+    if (m) {
+      const d = m[1];
+      const num = CN_NUM.indexOf(d) + 1;
+      if (subj === 'chinese') {
+        if (num > 6) return { scopes: ['六'], stage: 'p', pick: false, note: '语文题库目前只覆盖小学一至六年级，已按六年级显示。' };
+        return { scopes: [d], stage: 'p', pick: false, note: '' };
+      }
+      if (subj === 'physics') {
+        if (num < 8) return { scopes: ['八'], stage: 'j', pick: false, note: '物理题库从八年级开始，已按八年级显示。' };
+        return { scopes: [d], stage: 'j', pick: false, note: '' };
+      }
+      if (subj === 'english') {
+        if (num < 3) return { scopes: ['三'], stage: 'p', pick: false, note: '英语题库从三年级开始，已按三年级显示。' };
+        return { scopes: [d], stage: num <= 6 ? 'p' : 'j', pick: false, note: '' };
+      }
+      return { scopes: [d], stage: num <= 6 ? 'p' : 'j', pick: false, note: '' };
+    }
+
+    if (subj === 'chinese') {
+      return { scopes: ['六'], stage: 'p', pick: false, note: '语文题库目前只覆盖小学一至六年级，已按六年级显示。' };
+    }
+    if (subj === 'physics') {
+      if (g === '高一') return BOOKS(['必修一', '必修二'], '高中物理高一跨必修一、必修二，默认必修一，可在上面切换。');
+      if (g === '高二') return BOOKS(['必修二', '必修三'], '高二跨必修二、必修三，默认必修二，可在上面切换。');
+      if (g === '高三') return BOOKS(['选必一', '选必二', '选必三'], '题库里没有「高三」整册，请选当前复习的册。', true);
+      return null;
+    }
+    if (subj === 'english') {
+      if (g === '高一') return BOOKS(['必修一', '必修二'], '高一跨必修一、必修二，默认必修一，可在上面切换。');
+      if (g === '高二') return BOOKS(['必修二', '必修三', '选必一'], '高二通常走必修二到选必一，默认必修二，可在上面切换。');
+      if (g === '高三') return BOOKS(['选必二', '选必三', '选必四'], '题库里没有「高三」整册，请选当前复习的册。', true);
+      return null;
+    }
+    if (g === '高一') return BOOKS(['高一'], '');
+    if (g === '高二') return BOOKS(['高二'], '');
+    if (g === '高三') return BOOKS(['选必一', '选必二', '选必三'], '题库里没有「高三」整册，请选当前复习的册。', true);
+    return null;
+  }
+
   /**
    * 按章汇总：范围内每章的 掌握 / 不稳 / 薄弱 / 未测 数量和薄弱、不稳的知识点 id。
    * 章按教材顺序给出，再按「薄弱数多、不稳数多」稳定排序，薄弱的章排前面。
@@ -985,6 +1045,7 @@
     normalizeConfirm: normalizeConfirm,
     needConfirm: needConfirm,
     gradeTargets: gradeTargets,
+    profileScopes: profileScopes,
     subjectOf: subjectOf,
     chapterSummary: chapterSummary,
     buildGraph: buildGraph,

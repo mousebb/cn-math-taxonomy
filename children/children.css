@@ -34,6 +34,18 @@ main.kids { width: min(760px, 100%); margin: 0 auto; padding: 20px 16px 56px; }
 .kid-form .form-actions button { flex: 1 1 0; }
 .kid-form .small { margin: 8px 0 0; }
 
+.kid-backup {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-top: 16px;
+}
+.kid-backup .small { margin: 8px 0 0; }
+.kid-backup .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.kid-backup .backup-actions > .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; cursor: pointer; }
+.kid-backup #backup-info { margin-top: 10px; }
+
 .kid-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
 .kid-picker label { font-weight: 700; }
 .kid-picker select { flex: 1 1 160px; min-width: 0; }

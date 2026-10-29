@@ -27,6 +27,17 @@ label { font-weight: 700; }
 .banner { background: var(--brand-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 14px; }
 .banner.demo { background: var(--warn-bg); }
 .chapter-browser > summary { cursor: pointer; font-weight: 800; min-height: 44px; display: flex; align-items: center; }
+/* 档案年级直接定好的范围：一行提示 + 「改范围」折叠，不再甩一排年级让人选 */
+.profile-hint {
+  background: var(--brand-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 0 0 10px;
+}
+.scope-edit { margin: 6px 0 2px; }
+.scope-edit > summary { cursor: pointer; font-weight: 700; color: var(--muted); min-height: 32px; display: flex; align-items: center; }
+.scope-edit[open] > summary { margin-bottom: 8px; }
 .vol { border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; background: var(--bg-elev); }
 .vol > summary { padding: 10px 12px; font-weight: 800; cursor: pointer; background: var(--bg-muted); border-radius: 12px; }
 .chap { margin: 0 8px 8px; }

@@ -57,6 +57,17 @@
       </div>
     </form>
   </section>
+  <section class="kid-backup" id="backup-card" aria-labelledby="backup-title">
+    <h2 id="backup-title">备份与恢复</h2>
+    <p class="muted small">档案、诊断记录、错题本和「问老师」的历史都只存在这台设备的浏览器里。清理网站数据、换设备，记录就没了——建议每周导出一次，文件存到网盘。</p>
+    <div class="backup-actions">
+      <button type="button" class="primary" id="btn-export">导出备份</button>
+      <label class="btn" for="file-import">导入备份</label>
+      <input type="file" id="file-import" accept="application/json,.json" hidden>
+    </div>
+    <p class="muted small" id="backup-info"></p>
+    <p class="err" id="backup-msg" role="alert" hidden></p>
+  </section>
   <p class="muted small kid-note">档案和诊断记录只保存在这台设备的浏览器里，不上传，也没有账号。清除浏览器数据，或者换一台设备，档案不会跟过去。</p>
 </main>
 <footer class="site-footer">

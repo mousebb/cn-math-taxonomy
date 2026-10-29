@@ -39,6 +39,9 @@
   let chapterOpen = false;
   let gradeSel = '七';     // 开始页「按年级整体诊断」：年级
   let volSel = '';         // '' 整年级 / '上' / '下'
+  let profileGrade = '';   // 当前孩子档案里的年级（如「高一」）
+  let currentPlan = null;  // 由档案年级推出来的默认范围（E.profileScopes）
+  let scopeTouched = false; // 用户手动改过范围后，就不再被档案覆盖
   let seedParam = null;    // URL 参数 seed：固定选题的随机种子
   let pathCy = null;
   let pathToken = 0;
@@ -175,7 +178,7 @@
     pathTipLock = false;
     if (pathCy) { pathCy.destroy(); pathCy = null; window.__pathCy = null; }
   }
-  function show(node) { teardownPath(); closeShare(); clearRoot(); root.append(node); window.scrollTo(0, 0); }
+  function show(node) { teardownPath(); closeShare(); clearRoot(); root.append(node); window.scrollTo(0, 0); window.CnmDiagCurrent = null; }
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
   function theme() {
     return {
@@ -282,7 +285,7 @@
     return h('div', { class: 'card child-bar no-print', id: 'child-bar' },
       h('div', { class: 'row' },
         h('label', { for: 'child-select' }, '当前孩子'),
-        childSelect(function (id) { CC.setCurrent(id); renderStart(); }),
+        childSelect(function (id) { CC.setCurrent(id); scopeTouched = false; renderStart(); }),
         h('span', { class: 'grow' }),
         cur ? h('a', { class: 'btn', href: childrenHref('history.html?child=' + encodeURIComponent(cur.id)), text: '历史与薄弱点' }) : null,
         h('a', { class: 'btn', href: childrenHref(fromQuery()), text: '孩子档案' })),
@@ -416,11 +419,12 @@
       class: 'stage-tab' + (startStage === value ? ' on' : ''),
       role: 'tab',
       'aria-selected': startStage === value ? 'true' : 'false',
-      onclick: function () { startStage = value; renderStart(); }
+      onclick: function () { scopeTouched = true; startStage = value; renderStart(); }
     }, label);
   }
 
   function renderStart(errMsg) {
+    syncProfileScope();
     const page = h('div');
     const saved = lsGet(sessionKey());
     if (saved && saved.targets && D.graph.byId[saved.targets[0]]) {
@@ -506,11 +510,62 @@
     return gradeSel + (volSel ? volSel : '年级');
   }
 
+  function stageOfGrade(v) {
+    if (/^[一二三四五六]$/.test(v)) return 'p';
+    if (/^[七八九]$/.test(v)) return 'j';
+    return v ? 'h' : '';
+  }
+  function scopeLabel(v) {
+    return /^[一二三四五六七八九]$/.test(v) ? v + '年级' : String(v);
+  }
+  /* 章节浏览默认展开哪一册：跟着当前范围走，别再一律展开「一上」 */
+  function preferredVolume() {
+    if (!gradeSel) return '';
+    if (/^[一二三四五六七八九]$/.test(gradeSel)) {
+      if (volSel === '全') return gradeSel + '全';
+      if (volSel === '上' || volSel === '下') return gradeSel + volSel;
+      if (gradeSel === '九' && subject === 'physics') return '九全';
+      return gradeSel + '上';
+    }
+    return gradeSel;
+  }
+  /* 没有档案时的默认年级，和 applySubjectChrome 的兜底保持一致 */
+  function fallbackGrade() {
+    if (subject === 'english') return '四';
+    if (subject === 'physics') return '八';
+    if (subject === 'chinese') return '一';
+    return '七';
+  }
+  /* 档案里有年级，就直接把诊断范围定好；用户自己改过之后不再覆盖 */
+  function syncProfileScope() {
+    const cur = CC.current();
+    profileGrade = cur && cur.grade ? cur.grade : '';
+    /* 浏览器缓存里可能是旧引擎，没有这个函数就退回原来的默认值，别把页面搞挂 */
+    currentPlan = profileGrade && E.profileScopes ? E.profileScopes(profileGrade, subject) : null;
+    /* 从「高三」档案切到「不保存到档案」时，gradeSel 会停在空值，得兜回来 */
+    if (!currentPlan) {
+      if (!gradeSel) { gradeSel = fallbackGrade(); volSel = ''; }
+      return;
+    }
+    if (scopeTouched) return;
+    gradeSel = currentPlan.pick ? '' : currentPlan.scopes[0];
+    volSel = '';
+    startStage = currentPlan.stage || '';
+  }
+
   function gradeCard() {
     const box = h('div', { class: 'card', id: 'grade-card' });
     const fill = function () {
+      /* 重建时记住「改范围」是不是展开的，别每点一下就自己收起来 */
+      const prevEdit = box.querySelector ? box.querySelector('.scope-edit') : null;
+      const editOpen = !!(prevEdit && prevEdit.open);
       while (box.firstChild) box.removeChild(box.firstChild);
-      const g = E.gradeTargets(D.graph, gradeScope(), subject);
+      const plan = currentPlan;
+      /* 高三档案：题库没有「高三」这一级，先让他点一册，不猜 */
+      const pickPending = !!(plan && plan.pick && !gradeSel);
+      /* 用户手动挑到档案范围之外的年级（比如高一补初中先修） */
+      const outOfPlan = !!(plan && gradeSel && plan.scopes.indexOf(gradeSel) < 0);
+      const g = pickPending ? null : E.gradeTargets(D.graph, gradeScope(), subject);
       const tabs = function (label, items, current, set) {
         return h('div', { class: 'stage-tabs', role: 'tablist', 'aria-label': label }, items.map(function (it) {
           return h('button', {
@@ -530,44 +585,70 @@
         limitInput.value = String(v);
         setSetting('screenLimit', v);
       });
-      box.append(
-        h('h2', { text: '按年级整体诊断' }),
-        h('p', { class: 'muted' }, '不选具体知识点，在一个年级（或一册）里抽查：每个知识点连续答对 ' + getSettings().confirm + ' 题才算掌握（可在上方改），答错只在所选范围内回溯先修，最后按章汇总出哪几章薄弱。适合期初摸底、学期末复习。'),
-        tabs('年级', subject === 'physics'
-          ? [['八', '八年级'], ['九', '九年级'], ['必修一', '必修一'], ['必修二', '必修二'], ['必修三', '必修三'],
-            ['选必一', '选必一'], ['选必二', '选必二'], ['选必三', '选必三']]
-          : subject === 'english'
-          ? '三四五六七八九'.split('').map(function (x) { return [x, x + '年级']; }).concat([
-            ['必修一', '必修一'], ['必修二', '必修二'], ['必修三', '必修三'],
-            ['选必一', '选必一'], ['选必二', '选必二'], ['选必三', '选必三'], ['选必四', '选必四']
-          ])
-          : subject === 'chinese'
-          ? '一二三四五六'.split('').map(function (x) { return [x, x + '年级']; })
-          : GRADES.map(function (x) { return [x, x + '年级']; }).concat([
-            ['高一', '高一'], ['高二', '高二'], ['选必一', '选必一'], ['选必二', '选必二'], ['选必三', '选必三']
-          ]), gradeSel, function (v) {
-          gradeSel = v;
-          if (seniorGrade(v)) volSel = '';
-          else if (subject === 'physics' && v === '九') volSel = '全';
-          else if (subject === 'english' && v === '九') volSel = '';
-          else if (volSel === '全') volSel = '';
-        }),
-        h('div', { style: 'margin-top:8px' }),
-        seniorGrade(gradeSel)
-          ? tabs('范围', [['', seniorRangeLabel(gradeSel)]], '', function () { volSel = ''; })
+      const setGrade = function (v) {
+        scopeTouched = true;
+        gradeSel = v;
+        if (seniorGrade(v)) volSel = '';
+        else if (subject === 'physics' && v === '九') volSel = '全';
+        else if (subject === 'english' && v === '九') volSel = '';
+        else if (volSel === '全') volSel = '';
+        startStage = stageOfGrade(v);
+      };
+      const gradeItems = subject === 'physics'
+        ? [['八', '八年级'], ['九', '九年级'], ['必修一', '必修一'], ['必修二', '必修二'], ['必修三', '必修三'],
+          ['选必一', '选必一'], ['选必二', '选必二'], ['选必三', '选必三']]
+        : subject === 'english'
+        ? '三四五六七八九'.split('').map(function (x) { return [x, x + '年级']; }).concat([
+          ['必修一', '必修一'], ['必修二', '必修二'], ['必修三', '必修三'],
+          ['选必一', '选必一'], ['选必二', '选必二'], ['选必三', '选必三'], ['选必四', '选必四']
+        ])
+        : subject === 'chinese'
+        ? '一二三四五六'.split('').map(function (x) { return [x, x + '年级']; })
+        : GRADES.map(function (x) { return [x, x + '年级']; }).concat([
+          ['高一', '高一'], ['高二', '高二'], ['选必一', '选必一'], ['选必二', '选必二'], ['选必三', '选必三']
+        ]);
+
+      box.append(h('h2', { text: '按年级整体诊断' }));
+      if (plan) {
+        box.append(h('p', { class: 'muted small profile-hint' },
+          '档案：' + profileGrade
+          + (outOfPlan ? ' · 已手动改范围' : '')
+          + (!outOfPlan && plan.pick ? ' · 这一级覆盖多册，先选一册' : '')
+          + (!outOfPlan && plan.note ? ' · ' + plan.note : '')));
+      }
+      box.append(h('p', { class: 'muted' }, '不选具体知识点，在一个年级（或一册）里抽查：每个知识点连续答对 ' + getSettings().confirm + ' 题才算掌握（可在上方改），答错只在所选范围内回溯先修，最后按章汇总出哪几章薄弱。适合期初摸底、学期末复习。'));
+      if (plan && plan.scopes.length > 1 && (pickPending || !outOfPlan)) {
+        box.append(tabs('档案年级对应的范围', plan.scopes.map(function (v) { return [v, scopeLabel(v)]; }), gradeSel, setGrade));
+      }
+      if (plan) {
+        box.append(h('details', { class: 'scope-edit', open: editOpen || undefined },
+          h('summary', null, plan.scopes.length > 1 ? '改范围（换册、跨年级复习）' : '改范围（跨年级复习）'),
+          tabs('年级', gradeItems, gradeSel, setGrade)));
+      } else {
+        box.append(tabs('年级', gradeItems, gradeSel, setGrade));
+      }
+      if (!pickPending) {
+        box.append(h('div', { style: 'margin-top:8px' }));
+        box.append(seniorGrade(gradeSel)
+          ? tabs('范围', [['', seniorRangeLabel(gradeSel)]], '', function () { scopeTouched = true; volSel = ''; })
           : (subject === 'physics' && gradeSel === '九')
-            ? tabs('范围', [['全', '全一册']], '全', function () { volSel = '全'; })
+            ? tabs('范围', [['全', '全一册']], '全', function () { scopeTouched = true; volSel = '全'; })
           : (subject === 'english' && gradeSel === '九')
-            ? tabs('范围', [['', '整年级'], ['上', '上册（新版）'], ['全', '全一册（旧版，九下暂用）']], volSel, function (v) { volSel = v; })
-            : tabs('范围', [['', '整年级'], ['上', '上册'], ['下', '下册']], volSel, function (v) { volSel = v; }),
-        h('p', { class: 'muted', id: 'grade-info' }, g ? g.label + '：' + g.ids.length + ' 个知识点。' : '这个范围没有知识点。'),
-        h('div', { class: 'row' },
-          h('label', null, '题量上限（' + SCREEN_MIN + '–' + SCREEN_MAX + '）', limitInput),
-          h('button', {
-            class: 'primary', id: 'btn-grade-start', disabled: !g,
-            onclick: function () { if (g) startSession(g.ids, g.label + '（整体筛查）', null, 'screen'); }
-          }, '开始整体诊断')),
-        h('p', { class: 'muted small' }, '知识点多、题量有限，到上限后没测到的标为「未测」；结果页可以再加题。默认 ' + E.SCREEN_LIMIT + ' 题。'));
+            ? tabs('范围', [['', '整年级'], ['上', '上册（新版）'], ['全', '全一册（旧版，九下暂用）']], volSel, function (v) { scopeTouched = true; volSel = v; })
+            : tabs('范围', [['', '整年级'], ['上', '上册'], ['下', '下册']], volSel, function (v) { scopeTouched = true; volSel = v; }));
+      }
+      box.append(h('p', { class: 'muted', id: 'grade-info' },
+        pickPending ? '先在上面选一册。' : g ? g.label + '：' + g.ids.length + ' 个知识点。' : '这个范围没有知识点。'));
+      box.append(h('div', { class: 'row' },
+        h('label', null, '题量上限（' + SCREEN_MIN + '–' + SCREEN_MAX + '）', limitInput),
+        h('button', {
+          class: 'primary', id: 'btn-grade-start', disabled: !g,
+          onclick: function () { if (g) startSession(g.ids, g.label + '（整体筛查）', null, 'screen'); }
+        }, '开始整体诊断')));
+      box.append(h('p', { class: 'muted small' }, '知识点多、题量有限，到上限后没测到的标为「未测」；结果页可以再加题。默认 ' + E.SCREEN_LIMIT + ' 题。'));
+      /* 范围变了，下面的章节浏览跟着展开对应的册（首次渲染时列表还没建，跳过） */
+      const list = box.isConnected ? document.getElementById('target-list') : null;
+      if (list) fillList(list);
     };
     fill();
     return box;
@@ -598,8 +679,10 @@
       if (!chapters.length) return;
       const count = chapters.reduce(function (n, c) { return n + c.rows.length; }, 0);
       shown += count;
-      const openVol = subject === 'physics' ? '八上' : subject === 'english' ? '三上' : '一上';
-      const seniorOpen = subject === 'english' || subject === 'physics' ? '必修一' : '高一';
+      /* 有档案或用户自己选过范围，才按范围展开；都没有就保持原来的默认，不动无关行为 */
+      const preferred = (currentPlan || scopeTouched) ? preferredVolume() : '';
+      const openVol = preferred || (subject === 'physics' ? '八上' : subject === 'english' ? '三上' : '一上');
+      const seniorOpen = preferred || (subject === 'english' || subject === 'physics' ? '必修一' : '高一');
       const det = h('details', { class: 'vol', open: !!q || (startStage === 'j' ? vv[0] === '七上' : startStage === 'h' ? vv[0] === seniorOpen : vv[0] === openVol) },
         h('summary', null, vv[1] + '（' + count + ' 个知识点）'));
       chapters.forEach(function (c) {
@@ -670,6 +753,56 @@
       q.explanation ? h('div', { class: 'explain', id: 'explain' }, h('b', null, '解析：'), q.explanation) : null);
   }
 
+  /* 把「当前这道题」暴露给 AI 辅导面板（assets/ai/chat.js）。
+   * 只是读取已有的 state，不改动任何诊断逻辑；面板不在时这里也没有副作用。 */
+  function publishCurrent(item) {
+    const id = item.topicId;
+    const t = D.graph.byId[id];
+    const atts = session.attempts[id] || [];
+    window.CnmDiagCurrent = {
+      topicId: id,
+      topicName: t ? t.name : id,
+      chapter: t ? t.chapter : '',
+      question: item.question,
+      attempt: item.attempt,
+      need: E.needConfirm(D.graph, session, id),
+      status: E.statusOf(session, id),
+      history: atts.map(function (a) { return a.result; }),
+      answered: session.answers.length,
+      limit: session.limit,
+      mode: session.mode,
+      isTarget: (session.targets || []).indexOf(id) >= 0,
+      targetLabel: sessionMeta ? sessionMeta.label : '',
+      subject: subject,
+      why: reasonFor(item),
+      studentAnswer: ui.answer
+        ? (item.question.type === 'choice' ? answerOfKey(item.question, ui.answer) : ui.answer)
+        : '',
+      verdict: (ui.verdict && ui.verdict.verdict) || null,
+      phase: ui.phase,
+    };
+  }
+
+  /* 告诉辅导面板「现在该你了」。reason=skip 表示学生点了「不会」。 */
+  function notifyTutor(reason) {
+    try {
+      document.dispatchEvent(new CustomEvent('cnm:tutor', { detail: { reason: reason } }));
+    } catch (e) {
+      /* 不支持 CustomEvent 的环境直接忽略，不影响诊断 */
+    }
+  }
+
+  /* 答完题也想听讲解：不是每个人都会点「不会」，判错、甚至蒙对，都需要这个入口。
+   * 点它不会提交答案、也不会跳题，只是把这道题连同判题结果交给辅导面板。 */
+  function tutorAskButton() {
+    return h('button', {
+      id: 'btn-tutor',
+      class: 'cnm-ask-tutor',
+      title: '带着这道题、标准答案和这次的判题结果去问老师',
+      onclick: function () { notifyTutor('explain'); }
+    }, '让老师讲讲这道题');
+  }
+
   function renderQuestion(item) {
     const id = item.topicId;
     const q = item.question;
@@ -727,7 +860,7 @@
       card.append(h('div', { class: 'row', style: 'margin-top:10px' },
         q.type === 'self' ? null : h('button', { class: 'primary', id: 'btn-submit', onclick: function () { judgeAndGo(item); } }, '提交答案'),
         q.type === 'choice' ? null : h('button', { id: 'btn-peek', onclick: function () { ui.phase = 'self'; ui.verdict = null; renderQuestion(item); } }, '看参考答案并自评'),
-        h('button', { id: 'btn-skip', onclick: function () { ui.phase = 'skip'; renderQuestion(item); } }, '不会')));
+        h('button', { id: 'btn-skip', onclick: function () { ui.phase = 'skip'; renderQuestion(item); notifyTutor('skip'); } }, '不会')));
     } else if (ui.phase === 'auto') {
       const ok = ui.verdict.verdict === 'correct';
       card.append(
@@ -737,12 +870,15 @@
         h('div', { class: 'row' },
           h('button', { class: 'primary', id: 'btn-next', onclick: function () { commit(ok ? 'correct' : 'wrong'); } }, '下一题'),
           h('button', { id: 'btn-flip', onclick: function () { commit(ok ? 'wrong' : 'correct'); } }, ok ? '判错了，我其实没做对' : '判错了，我其实做对了'),
-          h('button', { onclick: function () { ui.phase = 'ask'; renderQuestion(item); } }, '重新作答')));
+          h('button', { onclick: function () { ui.phase = 'ask'; renderQuestion(item); } }, '重新作答'),
+          tutorAskButton()));
     } else if (ui.phase === 'skip') {
       card.append(
         h('div', { class: 'muted' }, '你选择了「不会」。看一下答案和解析再继续：'),
         feedbackBlock(q),
-        h('div', { class: 'row' }, h('button', { class: 'primary', id: 'btn-next', onclick: function () { commit('skip'); } }, '下一题')));
+        h('div', { class: 'row' },
+          h('button', { class: 'primary', id: 'btn-next', onclick: function () { commit('skip'); } }, '下一题'),
+          tutorAskButton()));
     } else {
       card.append(
         ui.answer ? h('div', { class: 'muted' }, '你的答案：' + ui.answer) : null,
@@ -752,7 +888,8 @@
         h('div', { class: 'row' },
           h('button', { class: 'good', id: 'btn-right', onclick: function () { commit('correct'); } }, '对（我做对了）'),
           h('button', { class: 'bad', id: 'btn-wrong', onclick: function () { commit('wrong'); } }, '不对'),
-          h('button', { id: 'btn-skip2', onclick: function () { commit('skip'); } }, '不会')));
+          h('button', { id: 'btn-skip2', onclick: function () { commit('skip'); } }, '不会'),
+          tutorAskButton()));
     }
 
     card.append(h('div', { class: 'notice' }, '提示：自动判题只是近似的（数字、分数、多个答案会做规范化后比较），一切以参考答案为准；判错了可以手动更正。'));
@@ -764,6 +901,7 @@
     page.append(childBar('question'));
     page.append(card);
     show(page);
+    publishCurrent(item);
     const inp = document.getElementById('ans');
     if (inp && inp.setSelectionRange && inp.tagName === 'INPUT') { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     else if (inp) inp.focus();
